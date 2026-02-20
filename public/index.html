@@ -1,84 +1,154 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>NexChat Live</title>
+    <title>NexChat AI | Video & Chat</title>
     <script src="/socket.io/socket.io.js"></script>
     <style>
-        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; }
-        .video-container { display: flex; flex-direction: column; height: 100vh; }
-        @media (min-width: 600px) { .video-container { flex-direction: row; } }
-        video { flex: 1; background: #111; object-fit: cover; width: 100%; height: 50%; transform: scaleX(-1); border: 1px solid #333; }
-        @media (min-width: 600px) { video { width: 50%; height: 100%; } }
-        #controls { position: absolute; bottom: 30px; width: 100%; display: flex; justify-content: center; z-index: 10; }
-        button { background: #ff9800; color: white; border: none; padding: 15px 40px; font-size: 20px; border-radius: 50px; cursor: pointer; font-weight: bold; }
-        #status { position: absolute; top: 10px; width: 100%; text-align: center; color: #ff9800; z-index: 10; font-family: sans-serif; }
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        body { background: #121212; color: white; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+        /* Main Container */
+        .main-container { display: flex; flex: 1; flex-direction: column; height: 100%; }
+        @media (min-width: 768px) { .main-container { flex-direction: row; } }
+
+        /* Video Section - Side Mein (Desktop par width fixed) */
+        .video-section { 
+            background: #000; 
+            display: flex; flex-direction: column; 
+            width: 100%; height: 45%; /* Mobile par top par */
+            border-bottom: 2px solid #333;
+        }
+        @media (min-width: 768px) { 
+            .video-section { width: 380px; height: 100%; border-right: 2px solid #333; border-bottom: none; } 
+        }
+
+        video { 
+            flex: 1; width: 100%; height: 50%; object-fit: cover; 
+            background: #1a1a1a; transform: scaleX(-1); border: 1px solid #222; 
+        }
+
+        /* Chat Section - Poori bachi hui jagah */
+        .chat-section { flex: 1; display: flex; flex-direction: column; background: #181818; position: relative; }
+        
+        #chat-box { 
+            flex: 1; padding: 15px; overflow-y: auto; 
+            display: flex; flex-direction: column; gap: 10px; 
+            background: #121212;
+        }
+
+        /* Messages Styling */
+        .msg { padding: 10px 15px; border-radius: 15px; max-width: 85%; font-size: 15px; line-height: 1.4; }
+        .stranger { background: #2c2c2c; align-self: flex-start; color: #fff; border-bottom-left-radius: 2px; }
+        .you { background: #ff9800; color: #000; align-self: flex-end; font-weight: 500; border-bottom-right-radius: 2px; }
+        .system { background: transparent; color: #ff9800; align-self: center; font-size: 12px; font-style: italic; }
+
+        /* Input Area & Controls */
+        .input-area { padding: 15px; background: #222; display: flex; gap: 10px; align-items: center; border-top: 1px solid #333; }
+        
+        input { 
+            flex: 1; padding: 12px 15px; border-radius: 25px; border: none; 
+            background: #333; color: white; outline: none; font-size: 16px;
+        }
+        
+        button { 
+            padding: 12px 20px; border-radius: 25px; border: none; 
+            cursor: pointer; font-weight: bold; transition: 0.2s; 
+        }
+        
+        #send-btn { background: #ff9800; color: black; }
+        #send-btn:hover { background: #e68a00; }
+        
+        #next-btn { background: #f44336; color: white; min-width: 80px; }
+        #next-btn:hover { background: #d32f2f; }
+
+        #status-bar { 
+            background: #000; color: #ff9800; padding: 5px; 
+            text-align: center; font-size: 13px; font-weight: bold; 
+        }
     </style>
 </head>
 <body>
-    <div id="status">Starting Camera...</div>
-    <div class="video-container">
-        <video id="remoteVideo" autoplay playsinline></video>
-        <video id="localVideo" autoplay playsinline muted></video>
-    </div>
-    <div id="controls">
-        <button onclick="nextStranger()">NEXT</button>
+
+    <div id="status-bar">Initializing Camera...</div>
+
+    <div class="main-container">
+        <div class="video-section">
+            <video id="remoteVideo" autoplay playsinline poster="https://via.placeholder.com/400x300?text=Partner+Video"></video>
+            <video id="localVideo" autoplay playsinline muted></video>
+        </div>
+
+        <div class="chat-section">
+            <div id="chat-box">
+                <div class="msg system">Welcome! Click NEXT to find someone to talk to.</div>
+            </div>
+            
+            <div class="input-area">
+                <button id="next-btn" onclick="nextStranger()">NEXT</button>
+                <input type="text" id="msgInput" placeholder="Type a message..." autocomplete="off" onkeypress="checkEnter(event)">
+                <button id="send-btn" onclick="sendMessage()">SEND</button>
+            </div>
+        </div>
     </div>
 
     <script>
         const socket = io();
-        let localStream;
-        let pc;
+        let localStream, pc, currentRoom;
         const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }] };
 
         async function init() {
             try {
                 localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
                 document.getElementById('localVideo').srcObject = localStream;
-                document.getElementById('status').innerText = "Ready! Tap NEXT";
+                document.getElementById('status-bar').innerText = "Ready! Click NEXT to start.";
             } catch (e) {
-                document.getElementById('status').innerText = "Camera Error! Please allow access.";
+                document.getElementById('status-bar').innerText = "Camera Error! Please allow access.";
+                alert("Camera access is required for video chat.");
             }
         }
 
         function nextStranger() {
-            if (pc) pc.close();
+            if (pc) { pc.close(); pc = null; }
+            currentRoom = null;
             document.getElementById('remoteVideo').srcObject = null;
-            document.getElementById('status').innerText = "Searching...";
+            document.getElementById('chat-box').innerHTML = '<div class="msg system">Searching for a stranger...</div>';
+            document.getElementById('status-bar').innerText = "Searching...";
             socket.emit('find-partner');
         }
 
         socket.on('found-partner', async (data) => {
-            document.getElementById('status').innerText = "Stranger Found!";
-            pc = new RTCPeerConnection(config);
-            localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+            currentRoom = data.room;
+            document.getElementById('status-bar').innerText = "Connected to a Stranger!";
+            addMsg("You are now chatting with a stranger. Say hi!", "system");
             
-            pc.onicecandidate = e => {
-                if (e.candidate) socket.emit('ice-candidate', { room: data.room, candidate: e.candidate });
-            };
-
-            pc.ontrack = e => {
-                document.getElementById('remoteVideo').srcObject = e.streams[0];
-            };
-
+            createPC(data.room);
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
             socket.emit('video-offer', { room: data.room, offer });
         });
 
-        socket.on('video-offer', async (data) => {
+        function createPC(room) {
             pc = new RTCPeerConnection(config);
             localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
-            
-            pc.onicecandidate = e => {
-                if (e.candidate) socket.emit('ice-candidate', { room: data.room, candidate: e.candidate });
+
+            pc.onicecandidate = (event) => {
+                if (event.candidate) {
+                    socket.emit('ice-candidate', { room, candidate: event.candidate });
+                }
             };
 
-            pc.ontrack = e => {
-                document.getElementById('remoteVideo').srcObject = e.streams[0];
+            pc.ontrack = (event) => {
+                const remoteVideo = document.getElementById('remoteVideo');
+                if (remoteVideo.srcObject !== event.streams[0]) {
+                    remoteVideo.srcObject = event.streams[0];
+                }
             };
+        }
 
+        // WebRTC Signaling Events
+        socket.on('video-offer', async (data) => {
+            createPC(data.room);
             await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
@@ -90,8 +160,38 @@
         });
 
         socket.on('ice-candidate', async (data) => {
-            if (pc) await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+            if (pc) {
+                try { await pc.addIceCandidate(new RTCIceCandidate(data.candidate)); } catch(e) {}
+            }
         });
+
+        // CHAT FUNCTIONS
+        function sendMessage() {
+            const input = document.getElementById('msgInput');
+            const message = input.value.trim();
+            if (message && currentRoom) {
+                socket.emit('send-msg', { room: currentRoom, msg: message });
+                addMsg(message, 'you');
+                input.value = '';
+            }
+        }
+
+        function addMsg(msg, type) {
+            const chatBox = document.getElementById('chat-box');
+            const msgDiv = document.createElement('div');
+            msgDiv.className = `msg ${type}`;
+            msgDiv.innerText = msg;
+            chatBox.appendChild(msgDiv);
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        socket.on('receive-msg', data => {
+            addMsg(data.msg, 'stranger');
+        });
+
+        function checkEnter(e) {
+            if (e.key === 'Enter') sendMessage();
+        }
 
         init();
     </script>
