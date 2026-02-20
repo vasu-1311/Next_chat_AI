@@ -1,51 +1,70 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
-const path = require('path'); // Naya add kiya deployment ke liye
+const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+const io = new Server(server, {
+  cors: {
+    origin: "*", // Sabhi origins ko allow karne ke liye
+    methods: ["GET", "POST"]
+  }
+});
 
-// Static files ke liye path fix kiya
+// Static files ke liye public folder link karo
 app.use(express.static(path.join(__dirname, 'public')));
 
 let waitingQueue = [];
 
 io.on('connection', (socket) => {
-    socket.on('find-partner', (userData) => {
-        waitingQueue = waitingQueue.filter(u => u.id !== socket.id);
-        
-        let partnerIndex = waitingQueue.findIndex(u => 
-            u.data.interests.toLowerCase() === userData.interests.toLowerCase() && userData.interests !== ""
-        );
-        if (partnerIndex === -1 && waitingQueue.length > 0) partnerIndex = 0;
+    console.log('A user connected:', socket.id);
 
-        if (partnerIndex !== -1) {
-            const partner = waitingQueue.splice(partnerIndex, 1)[0];
-            const room = partner.id;
-            socket.join(room);
-            io.to(partner.id).emit('found-partner', { room, partnerData: userData });
-            socket.emit('found-partner', { room, partnerData: partner.data });
+    // Jab user "Next" ya "Find Partner" click kare
+    socket.on('find-partner', (userData) => {
+        // Purani queue se safai
+        waitingQueue = waitingQueue.filter(u => u.id !== socket.id);
+
+        if (waitingQueue.length > 0) {
+            // Agar koi wait kar raha hai toh use connect karo
+            const partner = waitingQueue.shift();
+            const roomName = `room-${socket.id}-${partner.id}`;
+
+            socket.join(roomName);
+            partner.socket.join(roomName);
+
+            // Dono ko batao ki partner mil gaya
+            io.to(roomName).emit('found-partner', { room: roomName });
+            console.log('Matched:', socket.id, 'with', partner.id);
         } else {
-            waitingQueue.push({ id: socket.id, data: userData });
-            socket.emit('waiting');
+            // Agar koi nahi hai toh queue mein daal do
+            waitingQueue.push({ id: socket.id, socket: socket });
+            console.log('User added to queue:', socket.id);
         }
     });
 
-    socket.on('video-offer', (data) => socket.to(data.room).emit('video-offer', data));
-    socket.on('video-answer', (data) => socket.to(data.room).emit('video-answer', data));
-    socket.on('ice-candidate', (data) => socket.to(data.room).emit('ice-candidate', data));
-    socket.on('send-message', (data) => socket.to(data.room).emit('receive-message', data.message));
-    socket.on('typing', (data) => socket.to(data.room).emit('typing', data.isTyping));
+    // WebRTC Signaling: Offer, Answer aur ICE Candidates
+    socket.on('video-offer', (data) => {
+        socket.to(data.room).emit('video-offer', data);
+    });
 
+    socket.on('video-answer', (data) => {
+        socket.to(data.room).emit('video-answer', data);
+    });
+
+    socket.on('ice-candidate', (data) => {
+        socket.to(data.room).emit('ice-candidate', data);
+    });
+
+    // Disconnect hone par queue se hatao
     socket.on('disconnect', () => {
         waitingQueue = waitingQueue.filter(u => u.id !== socket.id);
+        console.log('User disconnected:', socket.id);
     });
 });
 
-// Port configuration Render/Deployment ke liye
+// Render ka port use karein ya local ke liye 3000
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-    console.log(`Server live on port ${PORT}`);
+    console.log(`Server is running on port ${PORT}`);
 });
