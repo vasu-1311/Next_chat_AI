@@ -3,136 +3,102 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>NexChat AI</title>
+    <title>NexChat Live</title>
     <script src="/socket.io/socket.io.js"></script>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; font-family: sans-serif; }
-        body { background: #000; color: white; height: 100vh; width: 100vw; overflow: hidden; position: fixed; }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; font-family: Arial, sans-serif; }
+        
+        /* Video Container: Split Screen */
+        .video-wrapper { display: flex; flex-direction: column; height: 100vh; width: 100vw; }
+        @media (min-width: 600px) { .video-wrapper { flex-direction: row; } }
 
-        /* Video Layout: Mobile par upar-neeche, Laptop par side-by-side */
-        #video-grid { 
-            display: flex; flex-direction: column; 
-            height: 100vh; width: 100vw; gap: 2px;
-        }
-        @media (min-width: 768px) { #video-grid { flex-direction: row; } }
+        video { flex: 1; background: #222; object-fit: cover; width: 100%; height: 50%; transform: scaleX(-1); border: 1px solid #333; }
+        @media (min-width: 600px) { video { width: 50%; height: 100%; } }
 
-        video { 
-            flex: 1; width: 100%; height: 50%; object-fit: cover; 
-            background: #111; transform: scaleX(-1); 
-        }
-        @media (min-width: 768px) { video { height: 100%; width: 50%; } }
-
-        /* Floating Controls: Video ke upar dikhenge */
-        #controls {
-            position: absolute; bottom: 20px; left: 0; right: 0;
-            display: flex; justify-content: center; gap: 10px;
-            z-index: 100; padding: 0 15px;
-        }
-
-        button {
-            padding: 15px 30px; font-size: 18px; font-weight: bold;
-            border-radius: 50px; border: none; cursor: pointer;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
-        }
-
-        #next-btn { background: #ff9800; color: white; }
-        #stop-btn { background: #f44336; color: white; }
-
-        #status {
-            position: absolute; top: 20px; left: 50%;
-            transform: translateX(-50%);
-            background: rgba(0,0,0,0.7); padding: 8px 20px;
-            border-radius: 20px; z-index: 100; font-size: 14px;
-            border: 1px solid #ff9800;
-        }
+        /* Status & Buttons - Forced on Top */
+        #status { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.8); color: #ff9800; padding: 5px 15px; border-radius: 20px; z-index: 9999; font-weight: bold; }
+        
+        #btn-container { position: absolute; bottom: 30px; left: 0; right: 0; display: flex; justify-content: center; z-index: 9999; }
+        
+        button { background: #ff9800; color: white; border: none; padding: 15px 40px; font-size: 20px; border-radius: 50px; cursor: pointer; box-shadow: 0 0 20px rgba(0,0,0,0.5); font-weight: bold; }
+        button:active { transform: scale(0.95); }
     </style>
 </head>
 <body>
 
-    <div id="status">Ready to Chat</div>
+    <div id="status">Allow Camera & Press NEXT</div>
 
-    <div id="video-grid">
-        <video id="remoteVideo" autoplay playsinline poster="https://via.placeholder.com/640x480?text=Stranger+Video"></video>
+    <div class="video-wrapper">
+        <video id="remoteVideo" autoplay playsinline></video>
         <video id="localVideo" autoplay playsinline muted></video>
     </div>
 
-    <div id="controls">
-        <button id="next-btn" onclick="findPartner()">NEXT</button>
+    <div id="btn-container">
+        <button onclick="startChat()">NEXT</button>
     </div>
 
     <script>
         const socket = io();
+        let pc;
         let localStream;
-        let peerConnection;
-        let currentRoom;
 
-        const config = {
-            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-        };
-
-        async function init() {
+        // Camera setup
+        async function startCamera() {
             try {
-                localStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: true });
+                localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
                 document.getElementById('localVideo').srcObject = localStream;
-            } catch (err) {
-                alert("Please allow Camera/Mic access");
+                document.getElementById('status').innerText = "Ready! Click NEXT";
+            } catch (e) {
+                alert("Camera access denied! Please allow from settings.");
             }
         }
 
-        function findPartner() {
-            if (peerConnection) {
-                peerConnection.close();
-                peerConnection = null;
-            }
-            document.getElementById('remoteVideo').srcObject = null;
-            document.getElementById('status').innerText = "Searching...";
+        async function startChat() {
+            if (pc) pc.close();
+            document.getElementById('status').innerText = "Searching for someone...";
             socket.emit('find-partner');
         }
 
         socket.on('found-partner', async (data) => {
-            currentRoom = data.room;
-            document.getElementById('status').innerText = "Connected!";
-            await createPeerConnection();
-            const offer = await peerConnection.createOffer();
-            await peerConnection.setLocalDescription(offer);
-            socket.emit('video-offer', { room: currentRoom, offer });
+            document.getElementById('status').innerText = "Connected! Connecting video...";
+            createPC(data.room);
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            socket.emit('video-offer', { room: data.room, offer });
         });
 
-        async function createPeerConnection() {
-            peerConnection = new RTCPeerConnection(config);
-            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+        function createPC(room) {
+            pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+            
+            localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
 
-            peerConnection.ontrack = (event) => {
-                const remoteVid = document.getElementById('remoteVideo');
-                if (remoteVid.srcObject !== event.streams[0]) {
-                    remoteVid.srcObject = event.streams[0];
-                }
+            pc.ontrack = e => {
+                document.getElementById('remoteVideo').srcObject = e.streams[0];
+                document.getElementById('status').innerText = "Chatting with Stranger";
             };
 
-            peerConnection.onicecandidate = (event) => {
-                if (event.candidate) {
-                    socket.emit('ice-candidate', { room: currentRoom, candidate: event.candidate });
-                }
+            pc.onicecandidate = e => {
+                if (e.candidate) socket.emit('ice-candidate', { room, candidate: e.candidate });
             };
         }
 
-        socket.on('video-offer', async (data) => {
-            await createPeerConnection();
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
-            const answer = await peerConnection.createAnswer();
-            await peerConnection.setLocalDescription(answer);
-            socket.emit('video-answer', { room: currentRoom, answer });
+        socket.on('video-offer', async data => {
+            createPC(data.room);
+            await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            socket.emit('video-answer', { room: data.room, answer });
         });
 
-        socket.on('video-answer', async (data) => {
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+        socket.on('video-answer', async data => {
+            await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
         });
 
-        socket.on('ice-candidate', async (data) => {
-            if (peerConnection) await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+        socket.on('ice-candidate', async data => {
+            if (pc) await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
         });
 
-        init();
+        startCamera();
     </script>
 </body>
 </html>
